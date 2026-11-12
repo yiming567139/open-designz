@@ -1269,7 +1269,7 @@ import {
   selectOdNextLayoutPrimitivesCss,
 } from '@open-design/contracts';
 import { attachPiRpcSession } from './agent-protocol/index.js';
-import { attachDshProfileSession } from './agent-protocol/index.js';
+import { attachDshProfileSession, buildDshProfileMcpServers } from './agent-protocol/index.js';
 import { promptBudgetAnalyticsFromDiagnostic } from './run-diagnostics.js';
 import {
   defaultBaseUrlForFinalizeProtocol,
@@ -16764,6 +16764,9 @@ export async function startServer({
         cwd: effectiveCwd,
         model: safeModel,
         reasoningEffort: safeReasoning,
+        // Same merged enabled list and OAuth token map the .mcp.json /
+        // ACP spawn paths consume; the plugin mounts these in-process.
+        mcpServers: buildDshProfileMcpServers(enabledExternalMcp, oauthTokensForSpawn),
         ...(agentResumeCtx.isResuming && agentResumeCtx.resumeSessionId
           ? { resumeSessionId: agentResumeCtx.resumeSessionId }
           : {}),

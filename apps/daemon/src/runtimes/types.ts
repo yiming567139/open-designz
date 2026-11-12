@@ -222,6 +222,11 @@ export type RuntimeAgentDef = {
   //   'mimo-env-content'      — same schema as opencode-env-content
   //                            but emitted as `MIMOCODE_CONFIG_CONTENT`
   //                            under MiMo's env namespace.
+  //   'dsh-profile-frame'     — project onto the generation-1 `execute`
+  //                            frame's `mcp_servers` entries; the
+  //                            open-design profile plugin mounts them
+  //                            in-process for the run (stdio and
+  //                            streamable-http).
   //
   // Leave undefined for adapters that have no native MCP transport
   // wired yet (codex, cursor-agent, copilot, qoder, pi). The
@@ -233,7 +238,8 @@ export type RuntimeAgentDef = {
     | 'claude-mcp-json'
     | 'acp-merge'
     | 'opencode-env-content'
-    | 'mimo-env-content';
+    | 'mimo-env-content'
+    | 'dsh-profile-frame';
   installUrl?: string;
   docsUrl?: string;
   // When `false`, the Settings model picker hides the "Custom (fill below)"

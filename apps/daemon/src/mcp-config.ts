@@ -162,7 +162,7 @@ function sanitizeMcpAuthMode(raw: unknown): McpAuthMode | undefined {
     : undefined;
 }
 
-function effectiveMcpAuthMode(server: McpServerConfig): McpAuthMode {
+export function effectiveMcpAuthMode(server: McpServerConfig): McpAuthMode {
   if (server.transport !== 'http' && server.transport !== 'sse') return 'none';
   return server.authMode ?? inferMcpAuthModeForUrl(server.url);
 }
@@ -346,7 +346,7 @@ export function buildClaudeMcpJson(
  * valid OAuth Bearer (the upstream MCP would refuse the connection and
  * fall back to its in-tool re-auth dance). Real user-pinned values still
  * win so manually-set PATs aren't silently overwritten. */
-function mergeAuthHeader(
+export function mergeAuthHeader(
   existing: Record<string, string> | undefined,
   bearer: string | undefined,
 ): Record<string, string> | undefined {

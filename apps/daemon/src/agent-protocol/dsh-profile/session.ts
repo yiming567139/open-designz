@@ -5,6 +5,7 @@ import type { ChildProcess } from 'node:child_process';
 import { createDshProfileJsonlStream } from './stream.js';
 import type {
   DshProfileExecuteCommand,
+  DshProfileMcpServerWire,
   DshProfileResultStatus,
   DshProfileRuntimeFrame,
 } from './types.js';
@@ -17,6 +18,10 @@ export type AttachDshProfileSessionOptions = {
   model?: string | null;
   reasoningEffort?: string | null;
   resumeSessionId?: string | null;
+  // External MCP servers projected onto the execute frame. Defaults to an
+  // empty list — the plugin then mounts nothing, exactly as before the
+  // projection existed.
+  mcpServers?: DshProfileMcpServerWire[];
   send: (event: string, payload: unknown) => void;
   onReady?: () => void;
   onSession?: () => void;
@@ -56,6 +61,7 @@ export function attachDshProfileSession({
   model,
   reasoningEffort,
   resumeSessionId,
+  mcpServers,
   send,
   onReady,
   onSession,
@@ -116,7 +122,7 @@ export function attachDshProfileSession({
       ...(resumeSessionId ? { resume_session_id: resumeSessionId } : {}),
       ...(selectedModel ? { model: selectedModel } : {}),
       ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
-      mcp_servers: [],
+      mcp_servers: mcpServers ?? [],
     };
     executeSent = true;
     sendCommand(command);

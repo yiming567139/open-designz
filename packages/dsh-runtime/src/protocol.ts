@@ -41,6 +41,21 @@ export type CancelCommand = {
   request_id: string;
 };
 
+/**
+ * One run-scoped MCP server as projected by the daemon onto the execute frame.
+ * `id` doubles as the mcp-client `serverName` namespace, so it must already
+ * satisfy the client's `[A-Za-z0-9_-]{1,32}` contract.
+ */
+export type ParsedMcpServer =
+  | { kind: 'stdio'; id: string; command: string; args: string[]; env: Record<string, string> }
+  | { kind: 'http'; id: string; url: string; headers: Record<string, string> };
+
+export type ParsedMcpServers = {
+  servers: ParsedMcpServer[];
+  /** Per-entry diagnostics for entries that failed validation; the rest still mount. */
+  dropped: string[];
+};
+
 export type HostCommand = ExecuteCommand | CancelCommand;
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -51,6 +66,66 @@ function record(value: unknown): Record<string, unknown> | null {
 
 function nonEmpty(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
+}
+
+function stringRecord(value: unknown): Record<string, string> {
+  const input = record(value);
+  if (!input) return {};
+  const entries: Record<string, string> = {};
+  for (const [key, entry] of Object.entries(input)) {
+    if (typeof entry === 'string') entries[key] = entry;
+  }
+  return entries;
+}
+
+/**
+ * Parse the execute frame's `mcp_servers` projection one entry at a time.
+ * A malformed entry is reported in `dropped` and skipped; it never rejects
+ * the execute command, mirroring the daemon-side per-server skip policy.
+ */
+export function parseMcpServers(raw: readonly unknown[]): ParsedMcpServers {
+  const servers: ParsedMcpServer[] = [];
+  const dropped: string[] = [];
+  const drop = (index: number, reason: string) => {
+    dropped.push(`mcp_servers[${index}] dropped: ${reason}`);
+  };
+  raw.forEach((entry, index) => {
+    const input = record(entry);
+    if (!input) {
+      drop(index, 'mcp server must be an object');
+      return;
+    }
+    if (!nonEmpty(input.id)) {
+      drop(index, 'mcp server is missing an id');
+      return;
+    }
+    const id = input.id;
+    if (!/^[A-Za-z0-9_-]{1,32}$/.test(id)) {
+      drop(index, `mcp server id "${id}" must match [A-Za-z0-9_-]{1,32}`);
+      return;
+    }
+    if (input.transport === 'stdio') {
+      if (!nonEmpty(input.command)) {
+        drop(index, `mcp server "${id}" is missing a stdio command`);
+        return;
+      }
+      const args = Array.isArray(input.args)
+        ? input.args.filter((arg): arg is string => typeof arg === 'string')
+        : [];
+      servers.push({ kind: 'stdio', id, command: input.command, args, env: stringRecord(input.env) });
+      return;
+    }
+    if (input.transport === 'http') {
+      if (!nonEmpty(input.url)) {
+        drop(index, `mcp server "${id}" is missing an http url`);
+        return;
+      }
+      servers.push({ kind: 'http', id, url: input.url, headers: stringRecord(input.headers) });
+      return;
+    }
+    drop(index, `mcp server "${id}" has no supported transport`);
+  });
+  return { servers, dropped };
 }
 
 export function parseHostCommand(value: unknown): HostCommand {

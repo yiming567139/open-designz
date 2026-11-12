@@ -149,6 +149,15 @@ export function validateRunToolBundleForAgent(
     };
   }
 
+  if (agent.externalMcpInjection === 'dsh-profile-frame') {
+    // The execute frame carries stdio and remote servers; the plugin mounts
+    // them per-run. A legacy `sse` URL projects onto streamable-http, and a
+    // server that only implements the older SSE transport fails per
+    // connection — the plugin skips it without failing the run — so no
+    // transport is rejected up front.
+    return { ok: true };
+  }
+
   return {
     ok: false,
     message: `${agentLabel(agent)} does not support run-scoped MCP tool bundles`,

@@ -227,5 +227,19 @@ describe('run-scoped tool bundles', () => {
         'Claude Code (claude) receives run-scoped MCP tool bundles through project .mcp.json, ' +
         'so toolBundle requires a daemon-managed project',
     });
+
+    // The DSH profile frame carries stdio and remote servers alike; legacy
+    // `sse` folds onto streamable-http at serialization time and per-server
+    // connection failures are skipped by the plugin, so nothing is rejected.
+    expect(validateRunToolBundleForAgent(stdioOnly, {
+      id: 'deepseek',
+      name: 'DeepSeek Harness',
+      externalMcpInjection: 'dsh-profile-frame',
+    })).toEqual({ ok: true });
+    expect(validateRunToolBundleForAgent(remote, {
+      id: 'deepseek',
+      name: 'DeepSeek Harness',
+      externalMcpInjection: 'dsh-profile-frame',
+    })).toEqual({ ok: true });
   });
 });

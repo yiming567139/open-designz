@@ -19,6 +19,22 @@ export type DshProfileModelSelection = {
   id: string;
 };
 
+// One external MCP server the host hands the plugin inside an `execute`
+// frame. The plugin parses each entry strictly (its parser drops invalid
+// entries and keeps the run alive), so this shape is the projection contract:
+// stdio servers carry command/args/env, remote ones carry url/headers. `sse`
+// is folded into `http` on the wire — the dsh-mcp-client only understands
+// stdio and streamable-http.
+export type DshProfileMcpServerWire = {
+  id: string;
+  transport: 'stdio' | 'http';
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  url?: string;
+  headers?: Record<string, string>;
+};
+
 export type DshProfileModelCatalogEntry = {
   provider: string;
   provider_name: string;
@@ -43,7 +59,7 @@ export type DshProfileExecuteCommand = {
   resume_session_id?: string;
   model?: DshProfileModelSelection;
   reasoning_effort?: string;
-  mcp_servers: unknown[];
+  mcp_servers: DshProfileMcpServerWire[];
 };
 
 export type DshProfileCancelCommand = {

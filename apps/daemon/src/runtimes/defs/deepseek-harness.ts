@@ -101,4 +101,7 @@ export const deepseekHarnessAgentDef = {
   resumesSessionViaProfileStdio: true,
   capturesSessionIdFromStream: true,
   supportsCustomModel: false,
+  // External MCP servers ride inside the `execute` frame; the open-design
+  // profile plugin mounts them in-process through @deepseek-ai/dsh-mcp-client.
+  externalMcpInjection: 'dsh-profile-frame',
 } satisfies RuntimeAgentDef;

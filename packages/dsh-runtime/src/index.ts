@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { createInterface } from 'node:readline';
 import type { Readable } from 'node:stream';
-import type { Context } from '@deepseek-ai/cordis';
+import type { Context, Fiber } from '@deepseek-ai/cordis';
 import type {} from '@deepseek-ai/cordis-plugin-loader';
+import type { Config as McpClientConfig } from '@deepseek-ai/dsh-mcp-client';
 import {
   installModelSelection,
   type AgentHandle,
@@ -22,8 +23,10 @@ import {
   identityFrame,
   modelsFrame,
   parseHostCommand,
+  parseMcpServers,
   type ExecuteCommand,
   type ModelCatalogEntry,
+  type ParsedMcpServer,
 } from './protocol.js';
 
 export const name = 'open-design-runtime';
@@ -36,7 +39,7 @@ export const inject = [
   'sessionPersistence',
 ];
 
-const PLUGIN_VERSION = '0.1.0';
+const PLUGIN_VERSION = '0.2.0';
 
 type Output = { write(chunk: string): unknown };
 type ExitFallbackTimer = { unref(): unknown };
@@ -47,6 +50,84 @@ type CancellationLatch = {
 };
 
 const PROCESS_EXIT_FALLBACK_MS = 1_000;
+const MCP_TOOL_CALL_TIMEOUT_MS = 60_000;
+
+/**
+ * Project one daemon-validated wire entry onto an mcp-client config. The
+ * client's schema requires every field, so daemon-omitted optional fields
+ * (`args`/`env`/`cwd`/`headers`) fall back to neutral defaults.
+ */
+function mcpClientConfig(server: ParsedMcpServer): McpClientConfig {
+  if (server.kind === 'stdio') {
+    return {
+      transport: 'stdio',
+      serverName: server.id,
+      command: server.command,
+      args: server.args,
+      env: server.env,
+      cwd: '',
+      toolCallTimeoutMs: MCP_TOOL_CALL_TIMEOUT_MS,
+      failOnStartupError: false,
+    };
+  }
+  return {
+    transport: 'streamable-http',
+    serverName: server.id,
+    url: server.url,
+    headers: server.headers,
+    toolCallTimeoutMs: MCP_TOOL_CALL_TIMEOUT_MS,
+    failOnStartupError: false,
+  };
+}
+
+/**
+ * Mount the execute frame's run-scoped MCP servers on `ctx.tools` through the
+ * mcp-client plugin, one fiber per server. The plugin module loads lazily —
+ * its dependency graph is owned by the dsh host and must never block a run
+ * that carries no servers. Startup failures are logged to stderr and skipped —
+ * the turn runs without that server's tools — mirroring the daemon-side
+ * per-server skip policy.
+ */
+async function mountMcpServers(
+  ctx: Context,
+  request: ExecuteCommand,
+  signal: AbortSignal,
+): Promise<Fiber[]> {
+  const { servers, dropped } = parseMcpServers(request.mcp_servers);
+  if (servers.length === 0) {
+    for (const reason of dropped) console.error(`open-design-runtime: ${reason}`);
+    return [];
+  }
+  let mountMcpClient: (ctx: Context, config: McpClientConfig) => Promise<void>;
+  try {
+    ({ apply: mountMcpClient } = await import('@deepseek-ai/dsh-mcp-client'));
+  } catch (error) {
+    const facts = errorFacts(error, 'DSH_PROFILE_MCP_CLIENT_LOAD_FAILED');
+    console.error(`open-design-runtime: failed to load @deepseek-ai/dsh-mcp-client, continuing without MCP tools: ${facts.message}`);
+    return [];
+  }
+  const fibers: Fiber[] = [];
+  for (const server of servers) {
+    if (signal.aborted) break;
+    const fiber = ctx.plugin(mountMcpClient, mcpClientConfig(server));
+    try {
+      await fiber;
+    } catch (error) {
+      const facts = errorFacts(error, 'DSH_PROFILE_MCP_STARTUP_FAILED');
+      console.error(
+        `open-design-runtime: MCP server "${server.id}" failed to start, continuing without its tools: ${facts.message}`,
+      );
+      await fiber.dispose().catch(() => undefined);
+      continue;
+    }
+    fibers.push(fiber);
+  }
+  return fibers;
+}
+
+async function disposeMcpServers(fibers: readonly Fiber[]): Promise<void> {
+  await Promise.all(fibers.map((fiber) => fiber.dispose().catch(() => undefined)));
+}
 
 function writeFrame(output: Output, frame: unknown): void {
   output.write(`${JSON.stringify(frame)}\n`);
@@ -270,6 +351,7 @@ async function execute(
   let firstSeq = Number.POSITIVE_INFINITY;
   let turnEnd: SessionEvent<'turn/end'> | undefined;
   let assistantOutput = '';
+  let mcpFibers: readonly Fiber[] = [];
   const setup = (agentCtx: Context) => {
     const selected: ModelSelectionRef = { current: selection, assembled: undefined };
     installModelSelection(agentCtx, selected);
@@ -285,6 +367,11 @@ async function execute(
   };
 
   try {
+    // Mount run-scoped MCP tools before the agent is created so the model's
+    // first turn sees them registered. A cancel that arrives mid-mount stops
+    // further mounts here and falls through to the normal cancellation path,
+    // which still constructs the agent with the already-aborted signal.
+    mcpFibers = await mountMcpServers(ctx, request, signal);
     try {
       handle = request.resume_session_id
         ? await ctx.agents.resume({ resumeSessionId: sessionId, agentOptions: selection, setup, signal })
@@ -372,6 +459,7 @@ async function execute(
   } finally {
     disposeEvent();
     await handle?.dispose().catch(() => undefined);
+    await disposeMcpServers(mcpFibers);
     onHandle(undefined);
   }
 }
@@ -473,10 +561,13 @@ export function apply(ctx: Context): void {
 export const internals = {
   contentText,
   createCancellationLatch,
+  disposeMcpServers,
   errorFacts,
   emitSessionEvent,
   execute,
   listModelCatalog,
+  mcpClientConfig,
+  mountMcpServers,
   requestProfileExit,
   resultStatus,
   resultError,

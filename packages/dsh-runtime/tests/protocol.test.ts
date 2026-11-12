@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { describe, test } from 'vitest';
-import { identityFrame, modelsFrame, parseHostCommand } from '../src/protocol.js';
+import { identityFrame, modelsFrame, parseHostCommand, parseMcpServers } from '../src/protocol.js';
 import { internals } from '../src/index.js';
 
 describe('@open-design/dsh-runtime protocol', () => {
@@ -333,5 +333,77 @@ describe('@open-design/dsh-runtime protocol', () => {
     assert.equal(frames.filter((frame) => frame.type === 'result').length, 1);
     assert.equal(frames.at(-1)?.status, 'cancelled');
     assert.equal(frames.at(-1)?.error, undefined);
+  });
+
+  test('parses well-formed stdio and http servers verbatim', () => {
+    assert.deepEqual(parseMcpServers([
+      {
+        id: 'files',
+        transport: 'stdio',
+        command: 'npx',
+        args: ['-y', '@modelcontextprotocol/server-filesystem', 'C:/tmp'],
+        env: { DEBUG: 'mcp', ignored: 42 },
+      },
+      {
+        id: 'remote',
+        transport: 'http',
+        url: 'https://mcp.example.com/mcp',
+        headers: { Authorization: 'Bearer t0k3n', empty: null },
+      },
+    ]), {
+      servers: [
+        {
+          kind: 'stdio',
+          id: 'files',
+          command: 'npx',
+          args: ['-y', '@modelcontextprotocol/server-filesystem', 'C:/tmp'],
+          env: { DEBUG: 'mcp' },
+        },
+        {
+          kind: 'http',
+          id: 'remote',
+          url: 'https://mcp.example.com/mcp',
+          headers: { Authorization: 'Bearer t0k3n' },
+        },
+      ],
+      dropped: [],
+    });
+    assert.deepEqual(parseMcpServers([]), { servers: [], dropped: [] });
+  });
+
+  test('defaults optional stdio and http fields to neutral values', () => {
+    assert.deepEqual(parseMcpServers([
+      { id: 'bare-stdio', transport: 'stdio', command: 'mcp-server' },
+      { id: 'bare-http', transport: 'http', url: 'http://127.0.0.1:3927/mcp' },
+    ]), {
+      servers: [
+        { kind: 'stdio', id: 'bare-stdio', command: 'mcp-server', args: [], env: {} },
+        { kind: 'http', id: 'bare-http', url: 'http://127.0.0.1:3927/mcp', headers: {} },
+      ],
+      dropped: [],
+    });
+  });
+
+  test('drops each malformed entry without rejecting the rest', () => {
+    const parsed = parseMcpServers([
+      'not-an-object',
+      { transport: 'stdio', command: 'no-id' },
+      { id: 'bad transport!', transport: 'stdio', command: 'x' },
+      { id: 'no-command', transport: 'stdio' },
+      { id: 'no-url', transport: 'http' },
+      { id: 'weird', transport: 'websocket', url: 'ws://x' },
+      { id: 'valid', transport: 'http', url: 'https://mcp.example.com/mcp' },
+    ]);
+    assert.deepEqual(parsed.servers, [
+      { kind: 'http', id: 'valid', url: 'https://mcp.example.com/mcp', headers: {} },
+    ]);
+    assert.deepEqual(parsed.dropped, [
+      'mcp_servers[0] dropped: mcp server must be an object',
+      'mcp_servers[1] dropped: mcp server is missing an id',
+      'mcp_servers[2] dropped: mcp server id "bad transport!" must match [A-Za-z0-9_-]{1,32}',
+      'mcp_servers[3] dropped: mcp server "no-command" is missing a stdio command',
+      'mcp_servers[4] dropped: mcp server "no-url" is missing an http url',
+      'mcp_servers[5] dropped: mcp server "weird" has no supported transport',
+    ]);
   });
 });
