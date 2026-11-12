@@ -708,10 +708,23 @@ async function probe(
       }, configuredEnv);
     }
   }
+  // A configured compatibilityProbe that reached this line has already
+  // PASSED — both failure paths early-return above. Passing the probe means
+  // the daemon verified the runtime's exact protocol contract (for dsh: the
+  // generation-1 profile handshake parsed and asserted by frames.ts), which
+  // is a stronger compatibility signal than any version number. The version
+  // therefore stays display-only for probed runtimes: an off-pattern release
+  // keeps working without an `untested-version` warning. Runtimes without a
+  // probe still warn, because the version policy is then the only
+  // compatibility read the daemon has (see
+  // tests/runtimes/version-policy.test.ts and
+  // tests/runtimes/dsh-profile-protocol-first.test.ts).
+  const protocolVerified = def.compatibilityProbe !== undefined;
   const versionDiagnostic =
     def.versionPolicy &&
     outcome.version &&
-    !versionIsSupported(def.versionPolicy, outcome.version)
+    !versionIsSupported(def.versionPolicy, outcome.version) &&
+    !protocolVerified
       ? buildVersionDiagnostic(def, outcome.version)
       : null;
   // The version probe must finish first (it gates availability), but the
