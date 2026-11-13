@@ -23,7 +23,9 @@ import type {
   WorkspaceInviteCreateResponse,
   WorkspaceInviteCreateResult,
   WorkspaceInviteRole,
+  LocalProjectsChangedSsePayload,
   WorkspaceInvalidationSsePayload,
+  WorkspaceDirectoryChangedSsePayload,
   WorkspaceTeamProjectsResponse,
 } from '@open-design/contracts';
 import { workspaceSeatCapacityState } from '@open-design/contracts';
@@ -103,16 +105,19 @@ export function emitWorkspaceEventToScope(
 
 /**
  * Deliver an account-level dirty signal through every already-authorized local
- * Workspace stream. The payload deliberately contains no Workspace id/content,
- * so this broad local nudge reveals no cross-workspace data; each browser then
- * re-reads the account directory through the daemon's current credential.
+ * Workspace stream. Broadcast payloads must stay content-free: a headerless
+ * create has no workspace scope, so the fan-out for `local-projects-changed`
+ * deliberately carries no `projectId` — one would leak one workspace's
+ * project onto every other workspace's stream (fresh object literals are
+ * rejected outright; the docblock keeps the rule for pre-built variables).
+ * Each browser then re-reads the authoritative list through the daemon's
+ * current credential.
  */
 export function emitWorkspaceEventToAllScopes(
   sinksByWorkspace: WorkspaceEventSinksByWorkspace,
-  payload: Extract<
-    WorkspaceInvalidationSsePayload,
-    { type: 'workspace-directory-changed' }
-  >,
+  payload:
+    | WorkspaceDirectoryChangedSsePayload
+    | { type: 'local-projects-changed'; at?: number },
 ): boolean {
   let emitted = false;
   for (const [workspaceId, sinks] of Array.from(sinksByWorkspace)) {

@@ -12,6 +12,10 @@
 //   - Project-scoped events ride the EXISTING `/api/projects/:id/events` SSE
 //     alongside `file-changed` / `live_artifact*` / `conversation-created`.
 //   - Workspace-scoped events ride the `/api/workspace/events` SSE.
+//   - Bare-local windows (no workspace identity) cannot join the workspace
+//     SSE, so `/api/projects/events` is a workspace-free catalog stream that
+//     carries only the content-free `local-projects-changed` nudge; it is the
+//     only push channel a signed-out web home has for external creates.
 //
 // Producer: `apps/daemon` (see `emitProjectEvent` / `emitWorkspaceEvent` in
 // `apps/daemon/src/server.ts`). Consumer: `apps/web` (the collab hooks +
@@ -136,6 +140,25 @@ export interface WorkspaceDirectoryChangedSsePayload {
   at?: number;
 }
 
+/**
+ * A local project was created outside this client's own window (MCP, the od
+ * CLI, another window) through the shared `POST /api/projects` route.
+ *
+ * Thin invalidation, mirroring the directory event above: it carries no
+ * project content and consumers re-fetch the authoritative project list. A
+ * headerless create has no workspace scope, so it fans out as a content-free
+ * nudge — carrying a `projectId` there would leak one workspace's project
+ * onto every other workspace's stream. The same payload rides the
+ * workspace-free `/api/projects/events` catalog stream, which by construction
+ * has no scope at all and therefore never carries a `projectId`.
+ */
+export interface LocalProjectsChangedSsePayload {
+  type: 'local-projects-changed';
+  /** Set only when the create was emitted inside the receiving workspace scope. */
+  projectId?: string;
+  at?: number;
+}
+
 /** Subscription / seat billing changed. */
 export interface WorkspaceBillingChangedSsePayload {
   type: 'billing-changed';
@@ -193,6 +216,7 @@ export type WorkspaceInvalidationSsePayload =
   | WorkspaceMembersChangedSsePayload
   | WorkspaceContextChangedSsePayload
   | WorkspaceDirectoryChangedSsePayload
+  | LocalProjectsChangedSsePayload
   | WorkspaceBillingChangedSsePayload
   | WorkspaceBillingSubscriptionChangedSsePayload
   | WorkspaceWalletBalanceChangedSsePayload
@@ -206,6 +230,7 @@ export const WORKSPACE_INVALIDATION_EVENTS = [
   'members-changed',
   'workspace-context-changed',
   'workspace-directory-changed',
+  'local-projects-changed',
   'billing-changed',
   'billing-subscription-changed',
   'wallet-balance-changed',

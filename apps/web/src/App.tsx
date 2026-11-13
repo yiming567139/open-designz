@@ -144,7 +144,8 @@ import {
   fetchTeamProjectCatalogEntry as fetchScopedTeamProjectCatalogEntry,
   fetchTeamProjectsCatalog,
 } from './collab/team-projects-catalog';
-import { useWorkspaceInvalidation } from './collab/workspace-events';
+import { useWorkspaceInvalidation, workspaceEventsUrl } from './collab/workspace-events';
+import { useEventStream } from './hooks/useEventStream';
 import { useWorkspaceSnapshotActivation } from './collab/workspace-snapshot-activation';
 import { workspaceProjectHeaders } from './collab/workspace-identity';
 import {
@@ -1404,6 +1405,13 @@ function AppInner() {
       }
       refreshProjectCatalogRef.current();
     },
+    'local-projects-changed': () => {
+      // A project was created outside this client's own window (MCP, the od
+      // CLI, another window) through the shared POST /api/projects route. The
+      // payload is a thin signal — re-read the authoritative list through the
+      // current credential instead of trusting the broadcast.
+      refreshProjectCatalogRef.current();
+    },
     'team-resources-changed': (payload) => {
       if (!payload.resourceKind) {
         teamResourceRefreshRefs.current.catchUp();
@@ -1433,6 +1441,24 @@ function AppInner() {
   }, {
     workspaceContext,
     onActive: handleTeamResourceStreamActive,
+  });
+  // Bare-local delivery: without a workspace identity there is no workspace
+  // SSE at all (`workspaceEventsUrl` requires a verified workspace pair), so
+  // the workspace-free local catalog stream is the ONLY push channel for
+  // external creates (MCP, the od CLI, another window). Exactly one of the
+  // two channels is ever live — this flag is the exact negation of the
+  // workspace stream's URL check, so the two subscriptions cannot double-fire.
+  const bareLocalCatalogInvalidationEnabled =
+    workspaceEventsUrl(invalidationWorkspaceContext) == null;
+  useEventStream('/api/projects/events', {
+    events: {
+      'local-projects-changed': () => {
+        // Same thin-signal contract as the workspace-stream handler above:
+        // re-read the authoritative list, never trust the broadcast payload.
+        refreshProjectCatalogRef.current();
+      },
+    },
+    enabled: bareLocalCatalogInvalidationEnabled,
   });
   const [petTaskCenter, setPetTaskCenter] = useState<PetTaskCenter>({
     running: [],
@@ -2847,7 +2873,23 @@ function AppInner() {
       console.error('[projects] failed to refresh after team catalog change', error);
     });
   }, [refreshProjectsStrict]);
-  refreshProjectCatalogRef.current = refreshProjectsAfterTeamCatalogChange;
+  // SSE handlers route through `refreshProjectCatalogRef`, so one dispatcher
+  // picks the delivery path by the live workspace identity: the workspace
+  // stream's handler needs the team-catalog invalidation, while the bare-local
+  // catalog stream — the only channel that exists without a workspace
+  // identity — just re-fetches the local list. Routing bare-local events
+  // through `refreshProjectsAfterTeamCatalogChange` alone would silently
+  // no-op (it bails without a context), which is exactly what made MCP/CLI
+  // creates invisible to an already-open bare-local home until an app
+  // restart.
+  const refreshProjectCatalogForSseChannel = useCallback(() => {
+    if (workspaceContextRef.current) {
+      refreshProjectsAfterTeamCatalogChange();
+      return;
+    }
+    void refreshProjects();
+  }, [refreshProjectsAfterTeamCatalogChange, refreshProjects]);
+  refreshProjectCatalogRef.current = refreshProjectCatalogForSseChannel;
 
   useEffect(() => {
     // Bootstrap already reads this exact scope on mount. Only re-list after

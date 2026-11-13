@@ -894,6 +894,7 @@ import { registerDesignSystemToolRoutes } from './routes/design-system-tool.js';
 import { registerDeployRoutes, registerDeploymentCheckRoutes } from './routes/deploy.js';
 import { registerMediaRoutes } from './routes/media.js';
 import { registerProjectRoutes, registerProjectArtifactRoutes, registerProjectFileRoutes, registerProjectUploadRoutes, createEnforceWorkspaceProjectMutation } from './routes/project/index.js';
+import { emitLocalProjectCatalogChanged, registerLocalProjectEventRoutes } from './routes/project/local-events.js';
 import { registerProjectChatArtifactRoutes } from './routes/project/chat-artifacts.js';
 import { createChatArtifactBlobStore } from './chat-artifacts/blob-store.js';
 import { resolveChatArtifactQuota } from './chat-artifacts/quota.js';
@@ -1707,6 +1708,37 @@ function emitWorkspaceDirectoryChanged(): boolean {
     type: 'workspace-directory-changed',
     at: Date.now(),
   });
+}
+
+// A successful local project create must reach every already-open view even
+// when it did not come from this browser (MCP, the od CLI, another window
+// hitting the same POST /api/projects). Bound creates stay inside their
+// verified workspace partition and carry the projectId so that scope can
+// focus its refresh; headerless creates have no scope at all, so they fan
+// out content-free to every connected stream — no projectId there, because
+// broadcasting it would leak one workspace's project onto every other
+// workspace's stream. The workspace-free local catalog stream
+// (`/api/projects/events`, the only channel a bare-local window can join)
+// receives every create content-free by the same no-leak rule.
+function emitLocalProjectsChanged(workspaceId, projectId) {
+  const scoped = workspaceId
+    ? emitWorkspaceEvent(workspaceId, {
+        type: 'local-projects-changed',
+        projectId,
+        at: Date.now(),
+      })
+    : emitWorkspaceEventToAllScopes(workspaceEventSinks, {
+        type: 'local-projects-changed',
+        at: Date.now(),
+      });
+  // Every create reaches the scope-free stream: a bare-local window cannot
+  // join any workspace partition, so without this hop it would never learn
+  // about an external create until an app restart.
+  const local = emitLocalProjectCatalogChanged({
+    type: 'local-projects-changed',
+    at: Date.now(),
+  });
+  return scoped || local;
 }
 
 function hubEventRefreshToken(event: {
@@ -9361,6 +9393,11 @@ export async function startServer({
       }
     },
   });
+  // The local catalog stream must exist before `/api/projects/:id` so the
+  // literal `events` segment wins over the parameter route.
+  registerLocalProjectEventRoutes(app, {
+    http: httpDeps,
+  });
   registerProjectRoutes(app, {
     db,
     publicFileMutations,
@@ -9394,6 +9431,9 @@ export async function startServer({
       : undefined,
     configuredEnv: configuredAmrEnv,
     allowStaticDevWorkspaceContext: process.env.OD_WORKSPACE_CONTEXT_SOURCE?.trim() !== 'vela',
+    notifyLocalProjectListChanged: (input) => {
+      emitLocalProjectsChanged(input.workspaceId, input.projectId);
+    },
     fetchProjectCreationWorkspaceDirectory,
     createWorkspaceOwnedDesignSystem: createWorkspaceOwnedDesignSystemForContext,
     pluginScope: {

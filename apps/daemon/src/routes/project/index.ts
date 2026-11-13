@@ -390,6 +390,17 @@ export interface RegisterProjectRoutesDeps extends RouteDeps<'db' | 'design' | '
   configuredEnv?: () => Record<string, string>;
   /** Development's explicit static Workspace context has no AMR directory. */
   allowStaticDevWorkspaceContext?: boolean;
+  /**
+   * Announce a successful local project creation to every subscribed
+   * Workspace stream so open views outside the creating client (MCP, the od
+   * CLI, another window) invalidate and re-fetch. `workspaceId` is the create's
+   * bound scope; null means a headerless create that has no scope, and the
+   * composition root must then fan out content-free across all scopes.
+   */
+  notifyLocalProjectListChanged?: (input: {
+    workspaceId: string | null;
+    projectId: string;
+  }) => void;
   /** @deprecated Creation is local; retained for compatible route composition. */
   fetchProjectCreationWorkspaceDirectory?: () => Promise<WorkspaceDirectoryFetchResult>;
   /**
@@ -4598,6 +4609,14 @@ export function registerProjectRoutes(app: Express, ctx: RegisterProjectRoutesDe
           : {}),
       };
       res.json(body);
+      // The HTTP create is the client-visible contract; this invalidation only
+      // tells every OTHER already-open view (other windows, MCP-created
+      // projects via the same route) to re-fetch. Fire after the response so
+      // the broadcaster's own latency never delays the creating client.
+      ctx.notifyLocalProjectListChanged?.({
+        workspaceId: createWorkspace.context?.workspaceId ?? null,
+        projectId: id,
+      });
     } catch (err: any) {
       if (err instanceof CreatedProjectWorkspaceResolutionError) {
         return sendApiError(
