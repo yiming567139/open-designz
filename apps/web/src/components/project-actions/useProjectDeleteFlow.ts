@@ -9,7 +9,7 @@ import {
   workspaceAnalyticsDimensions,
 } from '../../analytics/workspace';
 import type { Project } from '../../types';
-import { useProjectShareHistoryState } from '../share/useProjectShareHistory';
+import { useProjectShareHistoryState, type ProjectShareReadStatus } from '../share/useProjectShareHistory';
 import { currentWorkspaceAccountGeneration } from '../../collab/workspace-identity';
 
 /** Return `false` (or reject) when the daemon refused or the request failed;
@@ -40,8 +40,16 @@ export function useProjectDeleteFlow(input: {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const accountGeneration = currentWorkspaceAccountGeneration();
   const { history, status } = useProjectShareHistoryState(target && workspaceContext ? target.id : undefined, workspaceContext, 'delete-confirmation');
-  const shareReadStatus = target && !workspaceContext ? 'error' : status;
-  const activeShareCount = history ? history.publications.filter(publication => publication.status === 'active').length : null;
+  // Public-link publications require a signed-in workspace (the daemon answers
+  // 409 WORKSPACE_IDENTITY_REQUIRED to a headerless share-state read), so a
+  // signed-out delete has no share history to check. Treating that as an
+  // unreadable failure pinned the dialog to `ds.actionFailed` and disabled the
+  // delete button for EVERY signed-out delete. Zero active shares is exact
+  // there, not fabricated — publishing one requires sign-in.
+  const shareReadStatus: ProjectShareReadStatus = workspaceContext == null ? 'ready' : status;
+  const activeShareCount = workspaceContext == null
+    ? 0
+    : history ? history.publications.filter(publication => publication.status === 'active').length : null;
 
   const request = useCallback((project: Project) => {
     setFailed(false);

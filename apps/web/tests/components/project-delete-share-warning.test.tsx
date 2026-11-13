@@ -91,3 +91,26 @@ it('canceling ignores a late history response and never deletes', async () => {
   expect(screen.queryByRole('alertdialog')).toBeNull();
   expect(remove).not.toHaveBeenCalled();
 });
+
+function SignedOutHarness() {
+  const flow = useProjectDeleteFlow({ onDelete: remove, analyticsPage: 'home', workspaceContext: null });
+  return <><button onClick={() => flow.request(project)}>Request delete</button>{flow.target ? <ProjectDeleteConfirmDialog projectName={flow.target.name} activeShareCount={flow.activeShareCount} shareReadStatus={flow.shareReadStatus} pending={flow.pending} failed={flow.failed} onCancel={flow.cancel} onConfirm={() => void flow.commit()} /> : null}</>;
+}
+
+// Public-link publications require a signed-in workspace (the daemon answers
+// 409 WORKSPACE_IDENTITY_REQUIRED to a headerless share-state read), so a
+// signed-out user can never have active shares. The delete confirmation must
+// not pin itself to that unreadable state: pinning rendered ds.actionFailed
+// and disabled the delete button for EVERY signed-out delete.
+it('deletes signed-out without a share-state read or the failed-share alert', async () => {
+  render(<SignedOutHarness />);
+  fireEvent.click(screen.getByText('Request delete'));
+  expect(request).not.toHaveBeenCalled();
+  expect(screen.queryByText('Something went wrong. Please try again.')).toBeNull();
+  expect(screen.getByText('Delete "Example"?')).toBeVisible();
+  const accept = screen.getByTestId('project-delete-confirm-accept');
+  expect(accept).toBeEnabled();
+  fireEvent.click(accept);
+  await waitFor(() => expect(remove).toHaveBeenCalledExactlyOnceWith('project'));
+  await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+});
