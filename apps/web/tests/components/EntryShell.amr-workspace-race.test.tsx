@@ -31,6 +31,30 @@ vi.mock('../../src/runtime/amr-balance-gate', async (importOriginal) => {
   };
 });
 
+// Escape hatch for tests that must pin the rail's account footer state
+// directly: the real hook derives its answer from a vela status + directory +
+// context fetch chain, which drags the whole first-run gate into the test.
+const workspaceContextStateOverride = vi.hoisted(() => ({
+  current: null as
+    | {
+        context: unknown;
+        loading: boolean;
+        failure?: 'unsupported' | 'unavailable' | 'reauth-required';
+        identityChangePending?: boolean;
+      }
+    | null,
+}));
+vi.mock('../../src/collab/useWorkspaceContext', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/collab/useWorkspaceContext')>();
+  return {
+    ...actual,
+    useWorkspaceContext: () =>
+      (workspaceContextStateOverride.current ?? actual.useWorkspaceContext()) as ReturnType<
+        typeof actual.useWorkspaceContext
+      >,
+  };
+});
+
 vi.mock('../../src/components/AmrBalanceDialog', () => ({
   AmrBalanceDialog: ({
     reason,
@@ -132,6 +156,7 @@ describe('EntryShell AMR workspace precheck race', () => {
   beforeEach(() => {
     globalThis.ResizeObserver = ResizeObserverMock as typeof ResizeObserver;
     window.sessionStorage.clear();
+    workspaceContextStateOverride.current = null;
     resetWorkspaceContextCache();
     resetWorkspaceBillingCache();
     resetTeamProjectsCache();
@@ -142,6 +167,7 @@ describe('EntryShell AMR workspace precheck race', () => {
     vi.useRealTimers();
     vi.restoreAllMocks();
     cleanup();
+    workspaceContextStateOverride.current = null;
     globalThis.fetch = originalFetch;
     globalThis.ResizeObserver = originalResizeObserver;
     mockedCheckAmrBalanceGate.mockReset();
@@ -683,6 +709,69 @@ describe('EntryShell AMR workspace precheck race', () => {
 
     expect(screen.queryByTestId('entry-cloud-signin-tip')).toBeNull();
     expect(screen.getByTestId('entry-rail-account-recovery-tip')).toBeTruthy();
+  });
+
+  it('never renders the invite sign-in callout in the signed-out rail footer', async () => {
+    // The rail's bottom-left "Invite colleagues for free" card was the
+    // sign-in fallback whenever the workspace context resolved to null
+    // (signed out, or a credential rejection). Product decision: the callout
+    // is retired — sign-in lives in Settings — so the footer stays empty in
+    // the sign-in state instead of pinning the pitch card there forever.
+    window.history.replaceState(null, '', '/');
+    // Pin the footer input directly: no workspace identity, nothing loading,
+    // no failure — exactly `resolveEntryRailAccountFooterState`'s 'sign-in'.
+    workspaceContextStateOverride.current = {
+      context: null,
+      loading: false,
+      identityChangePending: false,
+    };
+    globalThis.fetch = vi.fn(async () => jsonResponse({})) as typeof fetch;
+
+    render(
+      <I18nProvider initial="en">
+        <EntryShellWithGateHost
+          skills={[]}
+          designTemplates={[]}
+          designSystems={[]}
+          projects={[]}
+          templates={[]}
+          promptTemplates={[]}
+          defaultDesignSystemId={null}
+          connectors={[]}
+          connectorsLoading={false}
+          config={amrConfig()}
+          agents={[amrAgent()]}
+          daemonLive
+          onModeChange={vi.fn()}
+          onAgentChange={vi.fn()}
+          onAgentModelChange={vi.fn()}
+          onApiProtocolChange={vi.fn()}
+          onApiModelChange={vi.fn()}
+          onConfigPersist={vi.fn()}
+          onRefreshAgents={vi.fn(() => [amrAgent()])}
+          onCreateProject={vi.fn()}
+          onCreatePluginShareProject={vi.fn()}
+          onImportClaudeDesign={vi.fn()}
+          onOpenProject={vi.fn()}
+          onOpenLiveArtifact={vi.fn()}
+          onDeleteProject={vi.fn()}
+          onRenameProject={vi.fn()}
+          onChangeDefaultDesignSystem={vi.fn()}
+          onPersistComposioKey={vi.fn()}
+          onOpenSettings={vi.fn()}
+          onCompleteOnboarding={vi.fn()}
+        />
+      </I18nProvider>,
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(screen.getByTestId('entry-nav-local-account-dock')).toBeTruthy();
+    expect(screen.queryByTestId('entry-cloud-signin-tip')).toBeNull();
+    expect(screen.queryByTestId('entry-rail-account-sync-tip')).toBeNull();
+    expect(screen.queryByTestId('entry-rail-account-recovery-tip')).toBeNull();
   });
 
   it('returns a definitively expired Cloud session to the existing sign-in gate', async () => {

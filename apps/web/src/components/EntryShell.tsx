@@ -105,7 +105,6 @@ import {
   ProjectSearchModal,
 } from './ProjectSearchModal';
 import {
-  CloudSignInTip,
   RailAccountRecoveryTip,
   RailAccountSyncTip,
 } from './CloudSignInTip';
@@ -755,9 +754,12 @@ export function EntryShell({
     accountFooterNotice = <RailAccountSyncTip />;
   } else if (accountFooterState === 'recovering') {
     accountFooterNotice = <RailAccountRecoveryTip />;
-  } else if (accountFooterState === 'sign-in') {
-    accountFooterNotice = <CloudSignInTip />;
   }
+  // Deliberately no 'sign-in' branch: the rail's bottom-left "invite
+  // colleagues / sign in" callout is retired by product decision. The signed-out
+  // footer keeps only the community/social dock; sign-in lives in Settings
+  // (and the onboarding gate for fresh installs). See
+  // resolveEntryRailAccountFooterState for how 'sign-in' is still reached.
   const workspaceContextRef = useRef(workspaceContext);
   workspaceContextRef.current = workspaceContext;
   const workspaceContextStateRef = useRef(workspaceContextState);
